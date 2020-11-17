@@ -1169,7 +1169,7 @@ void cache_end_insert(void);
 void cache_start_insert(void);
 int cache_recv_insert(time_t now, int fd);
 struct crec *cache_insert(char *name, union all_addr *addr, unsigned short class, 
-			  time_t now, unsigned long ttl, unsigned int flags);
+			  time_t now, unsigned long ttl, unsigned int flags, char *arg);
 void cache_reload(void);
 void cache_add_dhcp_entry(char *host_name, int prot, union all_addr *host_address, time_t ttd);
 struct in_addr a_record_from_hosts(char *name, time_t now);

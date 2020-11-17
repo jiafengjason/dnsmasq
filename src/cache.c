@@ -470,7 +470,7 @@ void cache_start_insert(void)
 }
 
 struct crec *cache_insert(char *name, union all_addr *addr, unsigned short class,
-			  time_t now,  unsigned long ttl, unsigned int flags)
+			  time_t now,  unsigned long ttl, unsigned int flags, char *arg)
 {
 #ifdef HAVE_DNSSEC
   if (flags & (F_DNSKEY | F_DS)) 
@@ -489,7 +489,7 @@ struct crec *cache_insert(char *name, union all_addr *addr, unsigned short class
 #endif
     {
       /* Don't log DNSSEC records here, done elsewhere */
-      log_query(flags | F_UPSTREAM, name, addr, NULL);
+      log_query(flags | F_UPSTREAM, name, addr, arg);
       if (daemon->max_cache_ttl != 0 && daemon->max_cache_ttl < ttl)
 	ttl = daemon->max_cache_ttl;
       if (daemon->min_cache_ttl != 0 && daemon->min_cache_ttl > ttl)
@@ -1869,8 +1869,10 @@ char *querystr(char *desc, unsigned short type)
 
 void log_query(unsigned int flags, char *name, union all_addr *addr, char *arg)
 {
-  char *source, *dest = daemon->addrbuff;
-  char *verb = "is";
+    char *source, *dest = daemon->addrbuff;
+    struct dns_header *header = (struct dns_header *)daemon->packet;
+    char *verb = "is";
+    struct frec *forward = NULL;
   
   if (!option_bool(OPT_LOG))
     return;
@@ -1880,7 +1882,7 @@ void log_query(unsigned int flags, char *name, union all_addr *addr, char *arg)
   if (addr)
     {
       if (flags & F_KEYTAG)
-	sprintf(daemon->addrbuff, arg, addr->log.keytag, addr->log.algo, addr->log.digest);
+    sprintf(daemon->addrbuff, arg, addr->log.keytag, addr->log.algo, addr->log.digest);
       else if (flags & F_RCODE)
 	{
 	  unsigned int rcode = addr->log.rcode;
@@ -1923,7 +1925,10 @@ void log_query(unsigned int flags, char *name, union all_addr *addr, char *arg)
 	}
     }
   else if (flags & F_CNAME)
-    dest = "<CNAME>";
+  {
+    //dest = "<CNAME>";
+    dest = arg;
+  }
   else if (flags & F_SRV)
     dest = "<SRV>";
   else if (flags & F_RRNAME)
@@ -1969,16 +1974,33 @@ void log_query(unsigned int flags, char *name, union all_addr *addr, char *arg)
   if (strlen(name) == 0)
     name = ".";
 
-  if (option_bool(OPT_EXTRALOG))
+    if (option_bool(OPT_EXTRALOG))
     {
-      int port = prettyprint_addr(daemon->log_source_addr, daemon->addrbuff2);
-      if (flags & F_NOEXTRA)
-	my_syslog(LOG_INFO, "* %s/%u %s %s %s %s", daemon->addrbuff2, port, source, name, verb, dest);
-      else
-	my_syslog(LOG_INFO, "%u %s/%u %s %s %s %s", daemon->log_display_id, daemon->addrbuff2, port, source, name, verb, dest);
+        int port = prettyprint_addr(daemon->log_source_addr, daemon->addrbuff2);
+        if (flags & F_NOEXTRA)
+            my_syslog(LOG_INFO, "* %s/%u %s %s %s %s", daemon->addrbuff2, port, source, name, verb, dest);
+        else
+            my_syslog(LOG_INFO, "%u %s/%u %s %s %s %s", daemon->log_display_id, daemon->addrbuff2, port, source, name, verb, dest);
     }
-  else
-    my_syslog(LOG_INFO, "%s %s %s %s", source, name, verb, dest);
+    else
+    {
+        for(forward = daemon->frec_list; forward; forward = forward->next)
+        {
+            if (htons(forward->new_id) == header->id)
+            {
+                break;
+            }
+        }
+
+        if(forward)
+        {
+            my_syslog(LOG_INFO, "id(%x): %s %s %s %s", forward->orig_id, source, name, verb, dest);
+        }
+        else
+        {
+            my_syslog(LOG_INFO, "id(%x): %s %s %s %s", ntohs(header->id), source, name, verb, dest);
+        }
+    }
 }
 
  

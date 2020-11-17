@@ -585,6 +585,7 @@ int extract_addresses(struct dns_header *header, size_t qlen, char *name, time_t
   unsigned char *p, *p1, *endrr, *namep;
   int i, j, qtype, qclass, aqtype, aqclass, ardlen, res, searched_soa = 0;
   unsigned long ttl = 0;
+  char cname_target[1024] = {0};
   union all_addr addr;
 #ifdef HAVE_IPSET
   char **ipsets_cur;
@@ -704,7 +705,7 @@ int extract_addresses(struct dns_header *header, size_t qlen, char *name, time_t
 			  goto cname_loop;
 			}
 		      
-		      cache_insert(name, &addr, C_IN, now, cttl, name_encoding | secflag | F_REVERSE);
+		      cache_insert(name, &addr, C_IN, now, cttl, name_encoding | secflag | F_REVERSE, NULL);
 		      found = 1; 
 		    }
 		  
@@ -722,7 +723,7 @@ int extract_addresses(struct dns_header *header, size_t qlen, char *name, time_t
 		  ttl = find_soa(header, qlen, NULL, doctored);
 		}
 	      if (ttl)
-		cache_insert(NULL, &addr, C_IN, now, ttl, name_encoding | F_REVERSE | F_NEG | flags | (secure ?  F_DNSSECOK : 0));	
+		cache_insert(NULL, &addr, C_IN, now, ttl, name_encoding | F_REVERSE | F_NEG | flags | (secure ?  F_DNSSECOK : 0), NULL);	
 	    }
 	}
       else
@@ -785,7 +786,8 @@ int extract_addresses(struct dns_header *header, size_t qlen, char *name, time_t
 		      if (!cname_count--)
 			return 0; /* looped CNAMES */
 
-		      if ((newc = cache_insert(name, NULL, C_IN, now, attl, F_CNAME | F_FORWARD | secflag)))
+            extract_name(header, qlen, &p1, cname_target, 1, 0);
+		    if ((newc = cache_insert(name, NULL, C_IN, now, attl, F_CNAME | F_FORWARD | secflag, cname_target)))
 			{
 			  newc->addr.cname.target.cache = NULL;
 			  newc->addr.cname.is_name_ptr = 0; 
@@ -803,8 +805,7 @@ int extract_addresses(struct dns_header *header, size_t qlen, char *name, time_t
 		      
 		      namep = p1;
 		      if (!extract_name(header, qlen, &p1, name, 1, 0))
-			return 0;
-		      
+                return 0;
 		      goto cname_loop1;
 		    }
 		  else if (!(flags & F_NXDOMAIN))
@@ -880,8 +881,7 @@ int extract_addresses(struct dns_header *header, size_t qlen, char *name, time_t
 			    }
 #endif
 			}
-		      
-		      newc = cache_insert(name, &addr, C_IN, now, attl, flags | F_FORWARD | secflag);
+		      newc = cache_insert(name, &addr, C_IN, now, attl, flags | F_FORWARD | secflag, NULL);
 		      if (newc && cpp)
 			{
 			  next_uid(newc);
@@ -908,7 +908,7 @@ int extract_addresses(struct dns_header *header, size_t qlen, char *name, time_t
 		 pointing at this, inherit its TTL */
 	      if (ttl || cpp)
 		{
-		  newc = cache_insert(name, NULL, C_IN, now, ttl ? ttl : cttl, F_FORWARD | F_NEG | flags | (secure ? F_DNSSECOK : 0));	
+		  newc = cache_insert(name, NULL, C_IN, now, ttl ? ttl : cttl, F_FORWARD | F_NEG | flags | (secure ? F_DNSSECOK : 0), NULL);	
 		  if (newc && cpp)
 		    {
 		      next_uid(newc);
@@ -1102,7 +1102,7 @@ int check_for_bogus_wildcard(struct dns_header *header, size_t qlen, char *name,
 		/* Found a bogus address. Insert that info here, since there no SOA record
 		   to get the ttl from in the normal processing */
 		cache_start_insert();
-		cache_insert(name, NULL, C_IN, now, ttl, F_IPV4 | F_FORWARD | F_NEG | F_NXDOMAIN);
+		cache_insert(name, NULL, C_IN, now, ttl, F_IPV4 | F_FORWARD | F_NEG | F_NXDOMAIN, NULL);
 		cache_end_insert();
 		
 		return 1;
@@ -1377,14 +1377,14 @@ size_t answer_request(struct dns_header *header, char *limit, size_t qlen,
 
       /* now extract name as .-concatenated string into name */
       if (!extract_name(header, qlen, &p, name, 1, 4))
-	return 0; /* bad packet */
+    return 0; /* bad packet */
             
       GETSHORT(qtype, p); 
       GETSHORT(qclass, p);
 
       ans = 0; /* have we answered this question */
 
-      while (--count != 0 && (crecp = cache_find_by_name(NULL, name, now, F_CNAME)))
+    while (--count != 0 && (crecp = cache_find_by_name(NULL, name, now, F_CNAME)))
 	{
 	  char *cname_target = cache_get_cname_target(crecp);
 
@@ -1398,14 +1398,19 @@ size_t answer_request(struct dns_header *header, char *limit, size_t qlen,
 	      if (!(crecp->flags & F_DNSSECOK))
 		sec_data = 0;
 
-	      if (!dryrun)
-		{
-		  log_query(crecp->flags, name, NULL, record_source(crecp->uid));
-		  if (add_resource_record(header, limit, &trunc, nameoffset, &ansp, 
-					  crec_ttl(crecp, now), &nameoffset,
-					  T_CNAME, C_IN, "d", cname_target))
-		    anscount++;
-		}
+          if (!dryrun)
+        {
+            if (crecp->flags & F_CNAME)
+            {
+                log_query(crecp->flags, name, NULL, cname_target);
+            }
+            else
+            {
+                log_query(crecp->flags, name, NULL, record_source(crecp->uid));
+            }
+            if (add_resource_record(header, limit, &trunc, nameoffset, &ansp, crec_ttl(crecp, now), &nameoffset, T_CNAME, C_IN, "d", cname_target))
+                 anscount++;
+        }
 
 	    }
 
@@ -1647,8 +1652,9 @@ size_t answer_request(struct dns_header *header, char *limit, size_t qlen,
 		      sec_data = 0;
 		      nxdomain = 1;
 		      if (!dryrun)
-			log_query(F_CONFIG | F_REVERSE | is_arpa | F_NEG | F_NXDOMAIN,
-				  name, &addr, NULL);
+              {
+                log_query(F_CONFIG | F_REVERSE | is_arpa | F_NEG | F_NXDOMAIN, name, &addr, NULL);
+              }
 		    }
 		}
 	    }
